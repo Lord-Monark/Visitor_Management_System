@@ -94,7 +94,33 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           .eq('auth_user_id', authData.user.id)
           .maybeSingle();
 
-        if (profileError || !userProfile) {
+        let finalUserProfile = userProfile;
+
+        // If no profile found by auth_user_id, try to find by email (for pre-seeded users)
+        if (!userProfile && !profileError) {
+          const { data: emailProfile, error: emailError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('email', authData.user.email)
+            .is('auth_user_id', null)
+            .maybeSingle();
+
+          if (emailProfile && !emailError) {
+            // Link the pre-seeded user to the auth user
+            const { data: updatedProfile, error: updateError } = await supabase
+              .from('users')
+              .update({ auth_user_id: authData.user.id })
+              .eq('id', emailProfile.id)
+              .select('*')
+              .single();
+
+            if (updatedProfile && !updateError) {
+              finalUserProfile = updatedProfile;
+            }
+          }
+        }
+
+        if (profileError || !finalUserProfile) {
           console.error('Profile error:', profileError);
           await supabase.auth.signOut();
           setIsLoading(false);
@@ -102,7 +128,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         // Check if role matches
-        if (userProfile.role !== credentials.role) {
+        if (finalUserProfile.role !== credentials.role) {
           await supabase.auth.signOut();
           setIsLoading(false);
           return false;
