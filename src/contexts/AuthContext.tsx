@@ -74,69 +74,92 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setIsLoading(true);
     
     try {
-      // First, sign in with Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: credentials.email,
-        password: credentials.password,
-      });
+      // Check if this is a demo user first
+      const { data: demoUser, error: demoError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', credentials.email)
+        .eq('role', credentials.role)
+        .maybeSingle();
 
-      if (authError) {
-        console.error('Auth error:', authError);
+      if (demoError) {
+        console.error('Demo user check error:', demoError);
         setIsLoading(false);
         return false;
       }
 
-      if (authData.user) {
-        // Fetch user profile to check role
-        const { data: userProfile, error: profileError } = await supabase
+      // For demo users with specific passwords, simulate authentication
+      const demoCredentials = {
+        'admin@company.com': 'admin123',
+        'john@company.com': 'employee123',
+        'guard@company.com': 'guard123'
+      };
+
+      if (demoUser && demoCredentials[credentials.email as keyof typeof demoCredentials] === credentials.password) {
+        // Create user session for demo user
+        const userData: User = {
+          id: demoUser.id,
+          name: demoUser.name,
+          email: demoUser.email,
+          role: demoUser.role,
+          department: demoUser.department,
+          createdAt: new Date(demoUser.created_at),
+          lastLogin: new Date(),
+        };
+        
+        setUser(userData);
+        
+        // Update last login
+        await supabase
           .from('users')
-          .select('*')
-          .eq('auth_user_id', authData.user.id)
-          .maybeSingle();
-
-        let finalUserProfile = userProfile;
-
-        // If no profile found by auth_user_id, try to find by email (for pre-seeded users)
-        if (!userProfile && !profileError) {
-          const { data: emailProfile, error: emailError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('email', authData.user.email)
-            .is('auth_user_id', null)
-            .maybeSingle();
-
-          if (emailProfile && !emailError) {
-            // Link the pre-seeded user to the auth user
-            const { data: updatedProfile, error: updateError } = await supabase
-              .from('users')
-              .update({ auth_user_id: authData.user.id })
-              .eq('id', emailProfile.id)
-              .select('*')
-              .single();
-
-            if (updatedProfile && !updateError) {
-              finalUserProfile = updatedProfile;
-            }
-          }
-        }
-
-        if (profileError || !finalUserProfile) {
-          console.error('Profile error:', profileError);
-          await supabase.auth.signOut();
-          setIsLoading(false);
-          return false;
-        }
-
-        // Check if role matches
-        if (finalUserProfile.role !== credentials.role) {
-          await supabase.auth.signOut();
-          setIsLoading(false);
-          return false;
-        }
-
-        // User profile will be set by the auth state change listener
+          .update({ last_login: new Date().toISOString() })
+          .eq('id', demoUser.id);
+        
         setIsLoading(false);
         return true;
+      }
+
+      // For non-demo users, try regular Supabase Auth
+      try {
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email: credentials.email,
+          password: credentials.password,
+        });
+
+        if (authError) {
+          console.error('Auth error:', authError);
+          setIsLoading(false);
+          return false;
+        }
+
+        if (authData.user) {
+          // Fetch user profile to check role
+          const { data: userProfile, error: profileError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('auth_user_id', authData.user.id)
+            .maybeSingle();
+
+          if (profileError || !userProfile) {
+            console.error('Profile error:', profileError);
+            await supabase.auth.signOut();
+            setIsLoading(false);
+            return false;
+          }
+
+          // Check if role matches
+          if (userProfile.role !== credentials.role) {
+            await supabase.auth.signOut();
+            setIsLoading(false);
+            return false;
+          }
+
+          // User profile will be set by the auth state change listener
+          setIsLoading(false);
+          return true;
+        }
+      } catch (authError) {
+        console.error('Supabase auth failed, checking for demo user:', authError);
       }
 
       setIsLoading(false);
@@ -199,7 +222,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const logout = async () => {
-    await supabase.auth.signOut();
+    // Only sign out from Supabase Auth if user has auth_user_id
+    if (user?.id) {
+      const { data: userProfile } = await supabase
+        .from('users')
+        .select('auth_user_id')
+        .eq('id', user.id)
+        .maybeSingle();
+      
+      if (userProfile?.auth_user_id) {
+        await supabase.auth.signOut();
+      }
+    }
     setUser(null);
   };
 
