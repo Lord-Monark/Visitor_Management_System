@@ -207,7 +207,38 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           return false;
         }
 
-        // User profile will be set by the auth state change listener
+        // Manually fetch and set the user profile to ensure immediate login
+        const { data: userProfile, error: fetchError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('auth_user_id', authData.user.id)
+          .single();
+
+        if (fetchError || !userProfile) {
+          console.error('Error fetching created profile:', fetchError);
+          setIsLoading(false);
+          return false;
+        }
+
+        // Set user data immediately
+        const userData: User = {
+          id: userProfile.id,
+          name: userProfile.name,
+          email: userProfile.email,
+          role: userProfile.role,
+          department: userProfile.department,
+          createdAt: new Date(userProfile.created_at),
+          lastLogin: new Date(),
+        };
+        
+        setUser(userData);
+        
+        // Update last login
+        await supabase
+          .from('users')
+          .update({ last_login: new Date().toISOString() })
+          .eq('id', userProfile.id);
+
         setIsLoading(false);
         return true;
       }
